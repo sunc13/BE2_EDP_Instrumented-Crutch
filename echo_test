@@ -1,0 +1,22 @@
+/*
+This is a echo test for Arduino Uno serial 
+communication with PC-USB
+
+Imperial College London Biomendical Engineering 
+Year 2 Project Instrumented Crutch
+echo_test version 1.0
+by Chang Sun
+2015/10/11
+*/
+void setup() {                
+// Turn on the serial protocal, using baude rate 9600
+  Serial.begin(9600);
+}
+
+void loop() {
+   //  check for data incoming from PC
+  if (Serial.available()) {
+    //echothe receieved data back to the serial port
+    Serial.write(Serial.read());
+  }
+}
