@@ -1,0 +1,414 @@
+/*
+Imperial College London Biomendical Engineering Year 2 Project
+Instrumented Crutch
+Integration Code Version 3.2
+by Chang Sun
+
+Vcc List
+Bluetooth 3.3v
+OpenLog   5v
+Load Cell 5v
+Acc       3.3v
+
+Connection List
+Openlog   GRN  - D7
+Openlog   TX-0 - D0
+Openlog   RX-I - D1
+Bluetooth TX-O - D2
+Bluetooth RX-I - D3
+Load Cell CLK  - D5
+Load Cell DOUT - D6
+Vibration Motor- D4
+Acc       SDA  - SDA
+Acc       SCL  - SCL
+
+ */
+
+//Library
+#include <Wire.h>
+#include <SoftwareSerial.h>
+#include "HX711.h"
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+//Constant
+  //Bluetooth
+  int bluetoothTx = 2;  // Bluetooth mate TX-O pin 
+  int bluetoothRx = 3;  // Bluetooth mate RX-I pin 
+
+  //Accelerometer
+  #define Acc (0x53) // Acc address as specified in Acc sheet 
+  byte AccBuff[6];
+  char AccPowerCtl = 0x2D;  //Power Control Register
+  char AccFORMAT = 0x31;
+  char AccX0 = 0x32; //X-Axis Acc 0
+  char AccX1 = 0x33; //X-Axis Acc 1
+  char AccY0 = 0x34; //Y-Axis Acc 0
+  char AccY1 = 0x35; //Y-Axis Acc 1
+  char AccZ0 = 0x36; //Z-Axis Acc 0
+  char AccZ1 = 0x37; //Z-Axis Acc 1
+  float angleBuf[9];
+
+  //OpenLog
+  int resetOpenLog = 7; //This pin resets OpenLog. Connect pin 7 to pin GRN on OpenLog.
+  char fileName[12]="CrutchL.txt";//Name of file logging into
+
+  //Load Cell
+  #define DOUT  6//Load cell data output
+  #define CLK  5 //Load cell clock signal
+  float calibration_factor = 23400; // Load cell Calibration factor
+
+  //Vibration Motor Pin
+  int vibration = 4;
+  
+  //Other
+  float loadBuf[10];
+  float threshLBuf[5];
+  float threshU=20;//Upper threshold
+  float threshL=10;//Lower threshold
+  int threshLCounter;
+  float shoulderL = 1.5; //Length of crutch (m)
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+//Object initialzation
+SoftwareSerial bluetooth(bluetoothTx, bluetoothRx);
+HX711 scale(DOUT, CLK);
+
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void setup()
+{ 
+  Wire.begin();        // Join i2c bus (address optional for master)
+  Serial.begin(9600);  // Start serial communication
+      
+      //Load Cell setup
+  scale.set_scale();
+  scale.tare(); //Reset the scale to 0
+  long zero_factor = scale.read_average(); //Get a baseline reading
+  
+      //Serial setup
+  setupOpenLog(); //Resets logger and waits for the '<' I'm alive character
+  gotoCommandMode(); //Puts OpenLog in command mode
+  appendFile(fileName); //Creates a new file or append to exist file
+  
+      //Accelerometer setup
+  //Put the ADXL345 into +/- 4G range by writing the value 0x01 to the Acc_FORMAT register.
+  writeTo(AccFORMAT, 0x01);
+  //Put the ADXL345 into Measurement Mode by writing 0x08 to the AccPowerCtl register.
+  writeTo(AccPowerCtl, 0x08);
+  
+      //Bluetooth setup
+  bluetooth.begin(115200);  // The Bluetooth Mate defaults to 115200bps
+  bluetooth.print("$");  // Print three times individually
+  bluetooth.print("$");
+  bluetooth.print("$");  // Enter command mode
+  delay(100);  // Short delay, wait for the Mate to send back CMD
+  bluetooth.println("U,9600,N");  // Temporarily Change the baudrate to 9600, no parity
+  bluetooth.begin(9600);  // Start bluetooth serial at 9600
+
+      //Vibration Motor
+  pinMode(vibration,OUTPUT);//Setup pin mode for for controlling vibration motor
+
+  threshLCounter =0;//initializing constant
+
+  delay(5000);
+   gotoCommandMode();
+   //blueLog(fileName);            //The updating via bluetooth is surpressed here
+   appendFile(fileName);
+   digitalWrite(vibration,HIGH);//Vibrate for 2 sec to signifying the end of bluetooth transmission
+   delay(2000);
+   digitalWrite(vibration,LOW);
+
+  
+}
+
+
+void loop()
+{
+  //Variable declaration
+  float yDeg; float load; int blueInput=3;
+  
+  /*
+  //Bluetooth input check-This step is used to set thresholds and other constants in crutch
+  //from Bluetooth input, due to technical issue, this function has not been implemented successfully
+  if(bluetooth.available())  // If the bluetooth sent any characters
+  {
+    blueInput=bluetooth.read();
+    if(blueInput==999)//999 symbolizing syncronization command
+    {blueLog(fileName);appendFile(fileName);}
+    else {
+      if((blueInput%10)==0)//setting upper threshold if command end with 0
+         {threshU=blueInput/10;}
+      if((blueInput%2)==1)//setting lower threshold if command end with 2
+         {threshL=(blueInput-2)/10;}
+          }
+    blueInput = 3;
+  }
+  */
+  
+  load = readLogLoad();//Read load information and store in memory 
+  readLogAngle(yDeg,angleBuf); // read angle and store in memory
+  threshLCheck(loadBuf,load);//perform lower threshold check
+  threshUCheck(load);//perform upper threshold check
+
+   /* the above process roughly takes 35ms, to control no feedback
+  frequency to be 10Hz, we add a delay of 65ms. However, this frequency 
+  control is not valid when haptic feedback is generated*/
+  delay(65);
+}
+
+
+
+
+//System::Upper threshold check
+void threshUCheck(float load)
+{
+  if (load>threshU)
+    {
+      digitalWrite(vibration,HIGH);//upper haptic feedback: vibration for 0.3 sec
+      delay(300);
+      digitalWrite(vibration,LOW);
+      } 
+}
+
+
+//System::Lower threshold check
+void threshLCheck(float loadBuf[10], float load)
+{ 
+  int i; float sum = 0;
+  float std = 0;
+  std = stddev(loadBuf);//calculate standard deviation for load buffer
+
+  if (std>1)
+  { 
+    if(loadBuf[4]>loadBuf[2]&&loadBuf[4]>loadBuf[6])//filter detection for local maximum
+    {
+      //alternative maximum filter
+    //&&loadBuf[2]>=loadBuf[0]&&loadBuf[6]>=loadBuf[8]&&loadBuf[4]>loadBuf[3]&&loadBuf[4]>loadBuf[5]
+    if(loadBuf[4]<threshL){
+      if(threshLCounter==1){//to avoid frequent feedback, only generate one feedback per two detection
+        //threshLCounter=0;
+      digitalWrite(vibration,HIGH);//lower haptic feedback:two short vibration for 0.1 sec
+      delay(100);
+      digitalWrite(vibration,LOW);
+      delay(100);
+      digitalWrite(vibration,HIGH);
+      delay(100);
+      digitalWrite(vibration,LOW);
+      }
+      threshLCounter = 1;
+    }
+      else
+        {threshLCounter=0;
+        
+    
+    }
+  }
+ }
+}
+//System::standard deviation
+float stddev(float buf[10])//calculating standard deviation in a buffer array if suze 10
+{
+  float sum=0;float avg=0;
+  float sqrsum=0; float std=0;
+  int i;
+  for(i=9;i>=0;i--)
+  {
+    sum=sum+buf[i];
+  }
+  avg = sum/10.0;
+  for(i=9;i>=0;i--)
+  {
+    sqrsum+=sq(buf[i]-avg);
+  }
+  std=sqrt(sqrsum/10.0);
+
+  return std;
+}
+
+//Load cell::read and log load information
+float readLogLoad()
+{
+  int j;float load;
+  scale.set_scale(calibration_factor); 
+  load = scale.get_units(), 1;
+  
+  for(j=9;j>0;j--)
+  {
+    loadBuf[j]=loadBuf[j-1];
+  }
+  loadBuf[0]=load;
+  
+  Serial.print(load);
+  Serial.print(" ");
+
+  return load;
+}
+//Load cell::read and log angular information
+void readLogAngle(float yDeg, float angleBuf[9]) //read angle and log critical angle/step indicator
+{
+  int stepMarker = 0; float critAngle = 0; int i; float dist;
+  readFrom( AccX0, 6, AccBuff); //read the acceleration Acc from the ADXL345
+  int y = (((int)AccBuff[3]) << 8) | AccBuff[2];//concatenate arrays to get raw acc y
+  yDeg = (asin(y/12.95/9.8))/3.14*180;//calculate angle between y axis and gravity axis
+
+  for(i=8;i>0;i--)
+  {
+    angleBuf[i]=angleBuf[i-1];
+  }
+  angleBuf[0]=yDeg;
+ //checking for critical angle in angle buffer position [4], determine step
+  if(angleBuf[4]>angleBuf[2]&&angleBuf[2]>=angleBuf[0]&&angleBuf[4]>angleBuf[6]&&angleBuf[6]>=angleBuf[8]&&angleBuf[4]>angleBuf[3]&&angleBuf[4]>angleBuf[5])
+    {critAngle = angleBuf[4];}
+  if(angleBuf[4]<angleBuf[2]&&angleBuf[2]<=angleBuf[0]&&angleBuf[4]<angleBuf[6]&&angleBuf[6]<=angleBuf[8]&&angleBuf[4]<angleBuf[3]&&angleBuf[4]<angleBuf[5])
+    {critAngle = angleBuf[4];stepMarker++;}
+    
+    dist = tan(abs(critAngle/57.3))*shoulderL;//calculate distance traveled in this step
+    Serial.print(dist);Serial.print(" ");Serial.print(stepMarker);Serial.println("");//logging angular information
+}
+
+
+//Accelerometer::write value to register
+void writeTo(byte address, byte val) {
+  Wire.beginTransmission(Acc); // start transmission to Acc 
+  Wire.write(address);             // send register address
+  Wire.write(val);                 // send value to write
+  Wire.endTransmission();         // end transmission
+}
+
+
+//Accelerometer::require data from sensor
+// Reads num bytes starting from address register on Acc in to AccBuff array
+void readFrom(byte address, int num, byte AccBuff[]) {
+  Wire.beginTransmission(Acc); // start transmission to Acc 
+  Wire.write(address);             // sends address to read from
+  Wire.endTransmission();         // end transmission
+  Wire.beginTransmission(Acc); // start transmission to Acc
+  Wire.requestFrom(Acc, num);    // request 6 bytes from Acc
+  int i = 0;
+  while(Wire.available())         // Acc may send less than requested (abnormal)
+  { 
+    AccBuff[i] = Wire.read();    // receive a byte
+    i++;
+  }
+  Wire.endTransmission();         // end transmission
+}
+
+//OpenLog::setup
+/*Setups up the software serial, resets OpenLog so we know what state it's in, and waits
+for OpenLog to come online and report '<' that it is ready to receive characters to record
+*/
+void setupOpenLog(void) {
+  pinMode(resetOpenLog, OUTPUT);
+  Serial.begin(9600);
+
+  //Reset OpenLog
+  digitalWrite(resetOpenLog, LOW);
+  delay(100);
+  digitalWrite(resetOpenLog, HIGH);
+
+  //Wait for OpenLog to respond with '<' to indicate it is alive and recording to a file
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '<') break;
+  }
+}
+
+//OpenLog::appendFile
+void appendFile(char *fileName) {
+
+  Serial.print("append ");
+  Serial.print(fileName);
+  Serial.write(13); //This is \r
+
+  //Wait for OpenLog to indicate file is open and ready for writing
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '<') break;
+  }
+
+  //OpenLog is now waiting for characters and will record them to the new file  
+}
+
+
+ //OpenLog::readFile
+void readFile(char *fileName) {
+  
+  Serial.print("read ");
+  Serial.print(fileName);
+  Serial.write(13); 
+  //The OpenLog echos the commands we send it by default so we have 'read log823.txt\r' sitting 
+  //in the RX buffer. Let's try to not print this.
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '\r') break;
+  }  
+
+  //This loop will stop listening after 1 second of no characters received
+  for(int timeOut = 0 ; timeOut < 1000 ; timeOut++) {
+    while(Serial.available()) {
+      char tempString[100];
+      
+      int spot = 0;
+      while(Serial.available()) {
+        tempString[spot++] = Serial.read();
+        if(spot > 98) break;
+      }
+      tempString[spot] = '\0';
+      //Serial.write(tempString); //Take the string from OpenLog and push it to the Arduino terminal
+      timeOut = 0;
+    }
+
+    delay(1);
+  }
+}
+
+//OpenLog::gotoCommandMode bring openlog into command mode
+void gotoCommandMode(void) {
+  //Send three control z to enter OpenLog command mode
+  //Works with Arduino v1.0
+  Serial.write(120);
+  Serial.write(120);
+  Serial.write(120);
+
+  //Wait for OpenLog to respond with '>' to indicate we are in command mode
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '>') break;
+  }
+}
+
+//OpenLog&Bluetooth::blueLog transmitting file in memory via bluetooth
+void blueLog(char *fileName){
+   Serial.print("read ");
+  Serial.print(fileName);
+  Serial.write(13); 
+  //The OpenLog echos the commands we send it by default so we have 'read log823.txt\r' sitting 
+  //in the RX buffer. Let's try to not print this.
+  //Serial.print("readFile while loop entering ");
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '\r') break;
+      //Serial.print("readFile inloop ");
+      //Serial.println("");
+  }  
+
+  //This loop will stop listening after 1 second of no characters received
+  for(int timeOut = 0 ; timeOut < 1000 ; timeOut++) {
+    while(Serial.available()) {
+      char tempString[100];
+      
+      int spot = 0;
+      while(Serial.available()) {
+        tempString[spot++] = Serial.read();
+        if(spot > 98) break;
+      }
+      tempString[spot] = '\0';
+      bluetooth.write(tempString); //Take the string from OpenLog and push it to the Arduino terminal
+      //Serial.println(tempString);
+      timeOut = 0;
+    }
+
+    delay(1);
+  }
+}
