@@ -1,11 +1,10 @@
 /*
-This is a echo test for Arduino Uno serial 
-communication with PC-USB
+This is a gyroscope test for ITG3200
 
 Imperial College London Biomendical Engineering 
 Year 2 Project Instrumented Crutch
 echo_test version 1.0
-2015/11/9
+2015/11/6
 */
 //including library
 #include <Wire.h>
