@@ -1,0 +1,173 @@
+/*
+This is a echo test for Arduino Uno serial 
+communication with PC-USB
+
+Imperial College London Biomendical Engineering 
+Year 2 Project Instrumented Crutch
+echo_test version 1.0
+2015/11/9
+*/
+//including library
+#include <Wire.h>
+#include <ADXL345.h>  // ADXL345 Accelerometer Library
+#include <ITG3200.h>
+
+//object initialization
+ADXL345 acc; //variable adxl is an instance of the ADXL345 library
+ITG3200 gyro = ITG3200();
+
+//parameter initialization
+float  gx,gy,gz;
+float  gx_rate, gy_rate, gz_rate;
+int ix, iy, iz;
+float anglegx=0.0, anglegy=0.0, anglegz=0.0;
+int ax,ay,az;  
+int rawX, rawY, rawZ;
+float X, Y, Z;
+float rollrad, pitchrad;
+float rolldeg, pitchdeg;
+int error = 0; 
+float aoffsetX, aoffsetY, aoffsetZ;
+float goffsetX, goffsetY, goffsetZ;
+unsigned long time, looptime;
+
+  float angZmax = 0; float angZmin = 0; float lastangZ =0;
+  float theangle = 0;
+  int riseInt = 0; int fallInt = 0; int stepc=0;
+  
+void setup(){
+  Serial.begin(9600);
+  acc.powerOn();
+  
+  
+ Serial.println("Setting measurement mode to continous");
+ 
+    for (int i = 0; i <= 200; i++) {
+    acc.readAccel(&ax, &ay, &az);
+    if (i == 0) {
+      aoffsetX = ax;
+      aoffsetY = ay;
+      aoffsetZ = az;
+    }
+    if (i > 1) {
+      aoffsetX = (ax + aoffsetX) / 2;
+      aoffsetY = (ay + aoffsetY) / 2;
+      aoffsetZ = (az + aoffsetZ) / 2;
+    }
+  }
+  for (int i = 0; i <= 200; i++) {
+    gyro.readGyro(&gx,&gy,&gz); 
+    if (i == 0) {
+      goffsetX = gx;
+      goffsetY = gy;
+      goffsetZ = gz;
+    }
+    if (i > 1) {
+      goffsetX = (gx + goffsetX) / 2;
+      goffsetY = (gy + goffsetY) / 2;
+      goffsetZ = (gz + goffsetZ) / 2;
+    }
+  }
+  
+  
+  delay(1000);
+  gyro.init(ITG3200_ADDR_AD0_LOW); 
+ Serial.print("zero Calibrating...");
+ gyro.zeroCalibrate(2500, 2);
+ Serial.println("done.");
+}
+
+void loop(){
+  
+ /* // code fragment for Accelerometer angles (roll and pitch)*/
+  time = millis();
+  /*
+  acc.readAccel(&ax, &ay, &az); //read the accelerometer values and store them in variables  x,y,z
+  rawX = ax - aoffsetX;
+  rawY = ay - aoffsetY;
+  rawZ = az  - (255 - aoffsetZ);
+  X = rawX/256.00; // used for angle calculations
+  Y = rawY/256.00; // used for angle calculations
+  Z = rawZ/256.00; // used for angle calculations
+  rollrad = atan(Y/sqrt(X*X+Z*Z));  // calculated angle in radians
+  pitchrad = atan(X/sqrt(Y*Y+Z*Z)); // calculated angle in radians
+  rolldeg = 180*(atan(Y/sqrt(X*X+Z*Z)))/PI; // calculated angle in degrees
+  pitchdeg = 180*(atan(X/sqrt(Y*Y+Z*Z)))/PI; // calculated angle in degrees*/
+
+
+  
+// Code fragment for Gyroscope (roll, pitch, yaw)  
+  gyro.readGyro(&gx,&gy,&gz); 
+  looptime = millis() - time;
+  gx_rate = (gx-goffsetX) / 14.375;
+  gy_rate = (gy-goffsetY) / 14.375;
+  gz_rate = (gz-goffsetZ) / 14.375;
+  delay(50);
+  /*
+ Serial.print(gx_rate);  // calculated angle in degrees
+  Serial.print(",");
+  Serial.print(gy_rate);
+  Serial.print(",");
+  Serial.print(gz_rate); 
+  Serial.println(","); 
+  
+   Serial.print(ax);  // calculated angle in degrees
+  Serial.print(",");
+  Serial.print(ay);
+  Serial.print(",");
+  Serial.print(az); 
+  Serial.println(",");
+  */
+  anglegx = anglegx + (gx_rate * looptime);
+  anglegy = anglegy + (gx_rate * looptime);
+  anglegz = anglegz + (gz_rate * looptime);
+// Accelerometer, Magnetometer and Gyroscope Output
+  /*Serial.print(rolldeg);
+  Serial.print(",");
+  Serial.print(pitchdeg);  // calculated angle in degrees
+  Serial.print(",");*/
+/*
+  
+  if(angZmax<=anglegz)
+    {angZmax = anglegz;}
+  if(angZmin>=anglegz)
+    {angZmin = anglegz;}
+  if(lastangZ-anglegz>0.5)
+    {fallInt++;}
+  if(anglegz-lastangZ>0.5)
+    {riseInt++;}
+  if(fallInt>6)
+    {angZmin=0; fallInt=0;}
+  if(riseInt>6)
+    {angZmax=0; riseInt=0;
+    theangle = angZmax-angZmin;
+    stepc++;
+    Serial.print("The angle: ");
+    Serial.print(theangle);
+    Serial.print("    Step: ");
+    Serial.print(stepc);
+    Serial.println("");}
+  lastangZ = anglegz;
+  /*
+  Serial.print(riseInt);
+  Serial.print("     ");
+  Serial.print(fallInt);
+  Serial.println("");*/
+  /*
+  Serial.println("angle");
+  Serial.print(angZmax); 
+  Serial.print(","); 
+  Serial.print(angZmin); 
+ */
+ 
+ Serial.print("angle");
+  Serial.print(anglegx); 
+  Serial.print(","); 
+  Serial.print(anglegy); 
+  Serial.print(","); 
+  Serial.println(anglegz);//println prints the string and moves the cursor to a new line 
+  Serial.println(looptime);
+
+}
+
+
