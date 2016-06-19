@@ -8,6 +8,7 @@ echo_test version 1.0
 by Chang Sun
 2015/10/11
 */
+
 void setup() {                
 // Turn on the serial protocal, using baude rate 9600
   Serial.begin(9600);
