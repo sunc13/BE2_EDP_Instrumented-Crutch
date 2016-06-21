@@ -1,0 +1,206 @@
+
+
+  //Library
+#include <Wire.h>
+#include <SoftwareSerial.h>
+
+//#include <Average.h>
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+//Constant
+  //Bluetooth
+  int bluetoothTx = 2;  // Bluetooth mate TX-O pin 
+  int bluetoothRx = 3;  // Bluetooth mate RX-I pin 
+
+  //OpenLog
+  int resetOpenLog = 7; //This pin resets OpenLog. Connect pin 7 to pin GRN on OpenLog.
+  char fileName[12]="CrutchL.txt";//Name of file logging into
+
+  //Other
+
+  float threshU=20;
+  float threshL=10;
+
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+//Object initialzation
+//SoftwareSerial OpenLog(9, 8); //Soft RX on 9, Soft TX out on 8
+SoftwareSerial bluetooth(bluetoothTx, bluetoothRx);
+
+
+
+//-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+void setup()
+{ 
+  Wire.begin();        // join i2c bus (address optional for master)
+  Serial.begin(9600);  // start serial for output. Make sure you set your Serial Monitor to the same!
+      
+      //OpenLog setup
+  setupOpenLog(); //Resets logger and waits for the '<' I'm alive character
+  //Serial.println("OpenLog online");
+  /*
+  gotoCommandMode(); //Puts OpenLog in command mode
+  appendFile(fileName); //Creates a new file or append to exist file
+  Serial.print("File created: ");
+  Serial.println(fileName);
+  */
+ 
+  
+      //Bluetooth setup
+   
+  bluetooth.begin(115200);  // The Bluetooth Mate defaults to 115200bps
+  //Serial.println("blue online");
+  bluetooth.print("$");  // Print three times individually
+  bluetooth.print("$");
+  bluetooth.print("$");  // Enter command mode
+  delay(100);  // Short delay, wait for the Mate to send back CMD
+  bluetooth.println("U,9600,N");  // Temporarily Change the baudrate to 9600, no parity
+  // 115200 can be too fast at times for NewSoftSerial to relay the data reliably
+
+  bluetooth.begin(9600);  // Start bluetooth serial at 9600
+
+   delay(10000);
+   gotoCommandMode();
+   readFile(fileName);
+   appendFile(fileName);
+}
+
+
+void loop()
+{ 
+  delay(10000);
+   int blueInput=3;
+  
+  gotoCommandMode();
+   readFile(fileName);
+   appendFile(fileName);
+   blueLog(fileName);
+ 
+ 
+
+
+  delay(5000); // control frequency
+}
+
+
+//OpenLog::setup
+//Setups up the software serial, resets OpenLog so we know what state it's in, and waits
+//for OpenLog to come online and report '<' that it is ready to receive characters to record
+void setupOpenLog(void) {
+  pinMode(resetOpenLog, OUTPUT);
+  Serial.begin(9600);
+
+  //Reset OpenLog
+  digitalWrite(resetOpenLog, LOW);
+  delay(100);
+  digitalWrite(resetOpenLog, HIGH);
+
+  //Wait for OpenLog to respond with '<' to indicate it is alive and recording to a file
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '<') break;
+  }
+}
+
+
+ //OpenLog::readFile
+void readFile(char *fileName) {
+  
+  Serial.print("read ");
+  Serial.print(fileName);
+  Serial.write(13); 
+  //The OpenLog echos the commands we send it by default so we have 'read log823.txt\r' sitting 
+  //in the RX buffer. Let's try to not print this.
+  //Serial.print("readFile while loop entering ");
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '\r') break;
+      //Serial.print("readFile inloop ");
+      //Serial.println("");
+  }  
+
+  //This loop will stop listening after 1 second of no characters received
+  for(int timeOut = 0 ; timeOut < 1000 ; timeOut++) {
+    while(Serial.available()) {
+      char tempString[100];
+      
+      int spot = 0;
+      while(Serial.available()) {
+        tempString[spot++] = Serial.read();
+        if(spot > 98) break;
+      }
+      tempString[spot] = '\0';
+      bluetooth.write(tempString); //Take the string from OpenLog and push it to the Arduino terminal
+      //Serial.println(tempString);
+      timeOut = 0;
+    }
+
+    delay(1);
+  }
+}
+
+//OpenLog::gotoCommandMode
+void gotoCommandMode(void) {
+  //Send three control z to enter OpenLog command mode
+  //Works with Arduino v1.0
+  Serial.write(120);
+  Serial.write(120);
+  Serial.write(120);
+
+  //Wait for OpenLog to respond with '>' to indicate we are in command mode
+  while(1) {
+    if(Serial.available())
+    //Serial.println(OpenLog.read());
+      if(Serial.read() == '>') break;
+  }
+  //Serial.println("entering command mode");
+}
+void appendFile(char *fileName) {
+
+  Serial.print("append ");
+  Serial.print(fileName);
+ Serial.write(13); //This is \r
+
+  //Wait for OpenLog to indicate file is open and ready for writing
+  while(1) {
+    if(Serial.available())
+      if(Serial.read() == '<') break;
+  }
+
+  //OpenLog is now waiting for characters and will record them to the new file  
+}
+//OpenLog&Bluetooth::blueLog
+
+void blueLog(char *fileName){
+   OpenLog.print("read ");
+  OpenLog.print(fileName);
+  OpenLog.write(13); 
+   Serial.print("blueLog while loop entering");
+  //The OpenLog echos the commands we send it by default so we have 'read log823.txt\r' sitting 
+  //in the RX buffer. Let's try to not print this.
+  while(1) {
+    if(OpenLog.available())
+      if(OpenLog.read() == '\r') 
+      {break; Serial.print("break");}
+  }  
+  //bluetooth.begin(14400);
+  //This loop will stop listening after 1 second of no characters received
+  for(int timeOut = 0 ; timeOut < 1000 ; timeOut++) {
+    while(OpenLog.available()) {
+      char tempString[100];
+      
+      int spot = 0;
+      while(OpenLog.available()) {
+        tempString[spot++] = OpenLog.read();
+        if(spot > 98) break;
+      }
+      tempString[spot] = '\0';
+      //Serial.print(tempString);
+      bluetooth.write(tempString); //Take the string from OpenLog and push it to the Arduino terminal
+      //Serial.println("Great");
+      timeOut = 0;
+    }
+ 
+  Serial.println("Great");
+    delay(1);
+  } //bluetooth.end();
+}
